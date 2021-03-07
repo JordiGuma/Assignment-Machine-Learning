@@ -1,1 +1,230 @@
+##Getting data
 
+
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv","training.csv",method = "curl")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv","testing.csv",method = "curl")
+
+##Data formating for being able to apply the two subsequent functions for data cleaning
+training <- as_tibble(fread("training.csv",na.strings=c('#DIV/0!', '', 'NA')))
+testing  <- as_tibble(fread("testing.csv",na.strings=c('#DIV/0!', '', 'NA')))
+
+dim(training)
+dim(testing)
+
+require(data.table)
+require(dplyr)
+require(caret)
+
+##Data cleaning
+#First, I remove all variables with almost no variability
+nzv <- nearZeroVar(training)
+training <- training[,-nzv]
+dim(training)
+
+#Second, I remove all variables with a high percentage of missing data
+
+mostlyNA <- sapply(training,function(x) mean(is.na(x))) > 0.95
+training <- training[,mostlyNA==FALSE]
+
+#Third, I remove all id variables 
+
+training<-training[ ,-c(1:5)]
+
+##Once the data cleaning is done, I will divide my training data into train and validation datasets
+
+set.seed(1111)
+
+TandV <- createDataPartition( y = training$classe,
+                                   p = 0.7,
+                                   list = FALSE)
+Wtraining <- training[TandV,]
+validation <- training[-TandV,]
+
+dim(Wtraining)
+dim(validation)
+
+
+###Random forests model. Considering that the variable that we must predict is categorical (factor), I choose the Random Forests method as the best option
+
+modRF<-train(classe~., data=Wtraining, method="rf", prox=TRUE,  trControl = trainControl(method="cv",number=3))
+
+#After many trials I consider that using the resampling method "cross-valiation" with three resamplings improves the results and is not extremely demanding for the laptop
+
+modRF
+
+Random Forest 
+
+13737 samples
+   53 predictor
+    5 classes: 'A', 'B', 'C', 'D', 'E' 
+
+No pre-processing
+Resampling: Cross-Validated (3 fold) 
+Summary of sample sizes: 9158, 9158, 9158 
+Resampling results across tuning parameters:
+
+  mtry  Accuracy   Kappa    
+   2    0.9916284  0.9894098
+  27    0.9962146  0.9952117
+  53    0.9945403  0.9930940
+
+##The accuracy of the Random forests model is extremely high (0.99->almost 1). Then, it seems likely that the predictions from this model will be highly accurate
+##In other words, this model is likely to perform well
+
+#Validation of the predictions obtained from the model. By comparing reald with estimate data for "classes" we can intuitively assess the performance of the model
+
+valprediction.rf <- predict(modRF,validation)
+class(valprediction.rf)
+class(validation$classe)
+validation$classe<-as.factor(validation$classe)
+
+##Both variables must be factors in ordeo to build the confusion matrix
+
+conf.matrix.rf <- confusionMatrix(valprediction.rf,validation$classe)
+print(conf.matrix.rf)
+
+          Reference
+Prediction    A    B    C    D    E
+         A 1674    3    0    0    0
+         B    0 1135    1    0    0
+         C    0    1 1025    3    0
+         D    0    0    0  961    2
+         E    0    0    0    0 1080
+
+#Differences can be considered as residual
+
+testprediction.rf <- predict(modRF,testing)
+print(testprediction.rf)
+
+#This is the final prediction for the variable "classe" in the "testing file"
+
+ [1] B A B A A E D B A A B C B A E E A B B B
+Levels: A B C D E
+
+
+##Generalized boosted model
+##Considering the possible advantages of using a boosted model, I repeat my analysis using this model. I decided to split my original file in 5 samples in order to perfom the cross-validation one time
+
+set.seed(1111)
+modBM <- train( classe ~.,
+                  data = Wtraining,
+                  method = "gbm",
+                  trControl = trainControl(method="repeatedcv",number = 5,repeats = 1),
+                  verbose = FALSE)
+
+modBM
+
+  interaction.depth  n.trees  Accuracy   Kappa    
+  1                   50      0.7583165  0.6934049
+  1                  100      0.8290017  0.7834274
+  1                  150      0.8709327  0.8366481
+  2                   50      0.8857841  0.8553721
+  2                  100      0.9416907  0.9262197
+  2                  150      0.9636025  0.9539497
+  3                   50      0.9333185  0.9155934
+  3                  100      0.9716825  0.9641707
+  3                  150      0.9855872  0.9817675
+  
+ #The optimal value of accuracy is reached in the third interaction with 150 trees. Although this value is also almost 1, is slightly lower than the accuracy obtained in previous model 
+
+##Validation of the predictions from this second model
+
+
+valprediction.bm <- predict(modBM,validation)
+conf.matrix.bm <- confusionMatrix(valprediction.bm,validation$classe)
+
+
+print(conf.matrix.bm)
+
+          Reference
+Prediction    A    B    C    D    E
+         A 1669    9    0    1    0
+         B    5 1124    4    5    4
+         C    0    6 1021    9    5
+         D    0    0    1  947    7
+         E    0    0    0    2 1066
+         
+
+## Here we see that this model is less precise than the previous one to estimate the categories D and E of the variable "class"
+
+print(summary(modBM))
+
+                                       var     rel.inf
+ num_window                     num_window 21.35545512
+ roll_belt                       roll_belt 18.27724938
+ pitch_forearm               pitch_forearm 10.13583112
+ magnet_dumbbell_z       magnet_dumbbell_z  6.72541291
+ yaw_belt                         yaw_belt  6.51200291
+ magnet_dumbbell_y       magnet_dumbbell_y  5.05649194
+ roll_forearm                 roll_forearm  3.49549946
+ accel_forearm_x           accel_forearm_x  2.61845321
+ magnet_belt_z               magnet_belt_z  2.53921239
+ pitch_belt                     pitch_belt  2.51716927
+ gyros_belt_z                 gyros_belt_z  1.82833065
+ gyros_dumbbell_y         gyros_dumbbell_y  1.79600229
+ accel_dumbbell_z         accel_dumbbell_z  1.78978003
+ roll_dumbbell               roll_dumbbell  1.71291149
+ accel_dumbbell_y         accel_dumbbell_y  1.51172485
+and so on...
+
+#From my point of view, one of the more interesting results from this model is the quantification of the relative influence from each of the varialbes included in the model
+##This permits to focus only on those variables with a higher relative importance within the model
+
+
+#Finally, I calculate again final prediction for the variable "classe" in the "testing file" using this second model
+
+
+testprediction.BM <- predict(modBM,testing)
+print(testprediction.BM)
+
+
+[1] B A B A A E D B A A B C B A E E A B B B
+Levels: A B C D E
+
+#The result is exactly the same
+
+
+#For the shake of curiosity, I repeat the previous Random Forests analysis but just with the most influent variables pointed by the Generalized Boosted Model
+
+modRF2<-train(classe~num_window + roll_belt + pitch_forearm + magnet_dumbbell_z + yaw_belt + magnet_dumbbell_y , data=Wtraining, method="rf", prox=TRUE,  trControl = trainControl(method="cv",number=3))
+
+modRF2
+
+
+  mtry  Accuracy   Kappa    
+  2     0.9972333  0.9965003
+  4     0.9971609  0.9964089
+  6     0.9953412  0.9941070
+  
+ ##The value of accuracy is again almost 1 and higher than in the Generalized Boosted Model
+
+
+
+valprediction2.rf <- predict(modRF2,validation)
+class(valprediction2.rf)
+class(validation$classe)
+validation2$classe<-as.factor(validation2$classe)
+conf.matrix2.rf <- confusionMatrix(valprediction2.rf,validation$classe)
+print(conf.matrix2.rf)
+
+Prediction    A    B    C    D    E
+         A 1674    2    0    0    0
+         B    0 1136    1    0    1
+         C    0    1 1025    3    0
+         D    0    0    0  961    5
+         E    0    0    0    0 1076
+         
+ 
+ #This model works better fot the categoy "B" but a little bit worse for the category "E"
+
+
+
+testprediction2.rf <- predict(modRF2,testing)
+print(testprediction2.rf)
+print(testprediction.rf)
+
+### We obtain exactly the same prediction but with a more parsimonious model!!
+
+[1] B A B A A E D B A A B C B A E E A B B B
+Levels: A B C D E
+© 2021 GitHub, Inc.
